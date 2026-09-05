@@ -4,21 +4,33 @@ This file provides guidance to Agents when working with code in this repository.
 
 ## What this is
 
-Pi-Apps is a shell-script-based app store for Raspberry Pi / ARM Linux (Debian/Ubuntu derivatives, plus Nintendo Switch Switchroot and Nvidia Jetson). There is no compiled code — the entire project is bash scripts plus a directory of per-app install/uninstall scripts and metadata. `apps/` contains ~257 app subdirectories, each a self-contained package.
+Pi-Apps is a shell-script-based app store for Raspberry Pi / ARM Linux (Debian/Ubuntu derivatives, plus Nintendo Switch Switchroot and Nvidia Jetson). There is no compiled code — the entire project is bash scripts plus a directory of per-app install/uninstall scripts and metadata. `apps/` contains ~260 app subdirectories (including `apps/template/`), each a self-contained package.
 
 A full narrated reference for every script and every `data`/`etc` file is published at [pi-apps.io](https://pi-apps.io) under Development ("Documentation", "Directory Tree", "Creating an App"); source markdown is in `src/wiki/development/` of [github.com/Pi-Apps-Coders/website](https://github.com/Pi-Apps-Coders/website) (a separate repo — check if it's cloned as a sibling directory before assuming it's available locally). Consult it for anything not covered below — it documents essentially every `api` function and every runtime file's exact meaning.
 
+## Commands
+
+There is no build step and no compiled code. These are the checks CI runs, and the ones to
+run locally before committing.
+
+```bash
+# Core scripts, the three etc/ scripts, and the app scripts you touched.
+# These are the exact target lists .github/workflows/shellcheck.yml uses.
+shellcheck api createapp gui install manage preload settings uninstall updater
+shellcheck etc/preload-daemon etc/runonce-entries etc/terminal-run
+shellcheck "apps/<App Name>/install" "apps/<App Name>/uninstall"
+
+# Install and uninstall a single app locally (this mutates the machine it runs on).
+./manage install "<App Name>"
+./manage uninstall "<App Name>"
+```
+
 ## Validating changes
 
-There is no build step and no automated test suite in the traditional sense. Validation is:
+There is no automated test suite in the traditional sense. Validation is:
 
-- **Shellcheck** — CI (`.github/workflows/shellcheck.yml`) runs `shellcheck` against the core scripts and every app's install/install-32/install-64/uninstall script. Run it locally before committing:
-  ```bash
-  shellcheck api createapp gui install manage preload settings uninstall updater
-  shellcheck "apps/<App Name>/install" "apps/<App Name>/uninstall"
-  ```
-  Only shellcheck errors (not warnings/info) fail CI — see the `sed` filter in that workflow for the exact severity cutoff.
-- **Live install/uninstall test — always run this for app-script changes, don't just reason about correctness.** `.github/workflows/test_build.yml` boots a real OS image in a chroot runner and does `./manage install "<App>"` then `./manage uninstall "<App>"`. It's manually dispatched and works from a fork: push your branch to your own fork and trigger it from the Actions tab (`test_build.yml` → "Run workflow") before considering any change to an app's `install`/`install-32`/`install-64`/`uninstall` script done. The currently-supported OS images (see Supported systems below) are pre-checked by default, so filling in the app name and running it as-is is normally all that's needed; unsupported/deprecated images (Bullseye, 32-bit Trixie) default off — leave them off unless you have a specific reason to test one.
+- **Shellcheck** — CI (`.github/workflows/shellcheck.yml`) runs `shellcheck` against the core scripts, three `etc/` scripts, and every app's install/install-32/install-64/uninstall script. Run the same targets locally before committing (see Commands above). Only shellcheck errors (not warnings/info) fail CI — see the `sed` filter in that workflow for the exact severity cutoff.
+- **Live install/uninstall test — always run this for app-script changes, don't just reason about correctness.** `.github/workflows/test_build.yml` boots a real OS image in a chroot runner and does `./manage install "<App>"` then `./manage uninstall "<App>"`. It's manually dispatched and works from a fork: push your branch to your own fork and trigger it from the Actions tab (`test_build.yml` → "Run workflow") before considering any change to an app's `install`/`install-32`/`install-64`/`uninstall` script done. Its first input accepts an app name, a PR number, or a zip URL. The currently-supported OS images (see Supported systems below) are pre-checked by default, so filling in the app name and running it as-is is normally all that's needed; unsupported/deprecated images (Bullseye, 32-bit Trixie) default off — leave them off unless you have a specific reason to test one.
 - **This CI only proves the app installs/uninstalls cleanly — it does not prove the app runs or works.** The chroot runner has no display/GPU, so it can't launch GUI apps or exercise real functionality. Before considering an app-script change (especially a new app) done, actually run the installed app on at least one real supported system you have physical/VM access to, and make a best-effort check (release notes, upstream changelog, reasoning about the change) for the supported systems you don't have access to.
 - File permissions matter: install/install-32/install-64/uninstall scripts must be mode 775 (enforced/auto-fixed by `.github/workflows/check_PR.yml`).
 
@@ -27,22 +39,22 @@ There is no build step and no automated test suite in the traditional sense. Val
 ### Top-level scripts (all bash, run from repo root, expect `DIRECTORY` = repo root)
 
 - **`api`** — the shared function library (~4200 lines). Almost everything sources this (`source "${DIRECTORY}/api"`). Every function has a one-line `#comment` describing its purpose right after the `{`; grep those to find what's available before writing a new helper. Key groups: package management (`install_packages`, `purge_packages`, `package_installed`, `apt_lock_wait`, `add_external_repo`), app introspection (`app_status`, `app_type`, `list_apps`, `script_name`, `will_reinstall`), repo/PPA helpers (`ubuntu_ppa_installer`, `debian_ppa_installer`, `repo_add`/`repo_refresh`), UI helpers wrapping `yad` (`userinput_func`, `multi_install_gui`), system detection (`is_supported_system`, `get_model`, `get_codename`), and generic wrappers around `wget`/`chmod`/`unzip`/`nproc` that add status output.
-- **`manage`** — CLI/engine that actually performs install/uninstall/update/refresh for one or more apps (`./manage install "App Name"`). This is what CI's test workflow drives directly. Modes: `install`, `uninstall`, `install-if-not-installed` (for one app depending on another, e.g. Wine depending on Box86), `multi-install`/`multi-uninstall` (newline-separated app lists), `check-all` (diff local `apps/` against the freshly pulled `update/pi-apps/apps/` to list updatable apps), `update`/`update-all`.
+- **`manage`** — CLI/engine that actually performs install/uninstall/update/refresh for one or more apps (`./manage install "App Name"`). This is what CI's test workflow drives directly. Modes: `install`, `uninstall`, `install-if-not-installed` (for one app depending on another, e.g. Wine depending on Box86), `multi-install`/`multi-uninstall` (newline-separated app lists), `update`, `daemon`. `check-all` and `update-all` still exist but are backwards-compatibility shims that delegate to `updater`; Pi-Apps scripts should call `updater`'s `update_app` function directly rather than `manage update`.
 - **`gui`** — the yad-based graphical app store front end (main window, categories, search, app details).
 - **`preload`** — generates the yad-formatted app list shown in the GUI, with its own change-detection/caching (`mktimestamps`) so it doesn't regenerate needlessly.
 - **`updater`** — checks the `update/pi-apps` clone (a git checkout of upstream master under `update/pi-apps/`) against the local copy to find app/script updates, both GUI (`updater gui`) and CLI (`updater cli`) modes.
 - **`createapp`** — wizard for scaffolding a new app directory interactively (yad dialogs).
 - **`settings`** — reads/writes `data/settings/<Setting Name>` files based on definitions in `etc/setting-params/`.
 - **`install` / `uninstall`** — bootstrap scripts for installing/removing Pi-Apps itself on a system (apt dependency install, `~/pi-apps` setup), not for individual apps.
-- **`etc/`** — supporting data/scripts, kept up to date by updates (unlike `data/`): `categories` (the global, canonical app→category mapping — see below), `setting-params/` (one file per setting: first uncommented line is the default, subsequent lines are other allowed values, `#`-prefixed line is the tooltip), `runonce-entries` (one-time migrations executed via the `runonce()` api function, hash-tracked in `data/runonce_hashes` so each entry runs at most once per user), `categoryedit` (CLI to move an app to a category, writes to `data/category-overrides`), `import-app`, `terminal-run` (runs a newline-separated command list in a new terminal window across all supported terminal emulators, blocking until the terminal closes — used instead of hand-rolling terminal detection), `preload-daemon`, `genapplist-yad(.c)` (a small C helper `preload` auto-compiles for speed, falling back to bash if compilation fails).
-- **`data/`** — user-local runtime state that updates must never touch: `data/status/<App>` (`installed`/`uninstalled`/`corrupted`/`disabled`), `data/settings/<Name>`, `data/category-overrides` (per-user overrides layered on top of `etc/categories`), `data/update-status`, `data/preload`, `data/runonce_hashes`.
+- **`etc/`** — supporting data/scripts, kept up to date by updates (unlike `data/`): `categories` (the global, canonical app→category mapping — see below), `category-overrides-*` (shipped per-platform category overlays for Jetson and non-Raspberry hosts), `setting-params/` (one file per setting: first uncommented line is the default, subsequent lines are other allowed values, `#`-prefixed line is the tooltip), `runonce-entries` (one-time migrations executed via the `runonce()` api function, hash-tracked in `data/runonce_hashes` so each entry runs at most once per user), `categoryedit` (CLI to move an app to a category, writes to `data/category-overrides`), `import-app`, `terminal-run` (runs a newline-separated command list in a new terminal window across all supported terminal emulators, blocking until the terminal closes — used instead of hand-rolling terminal detection), `preload-daemon`, `logviewer`/`viewlog` (log browsing UI), `git_url`.
+- **`data/`** — user-local runtime state that updates must never touch, and which is gitignored apart from `data/update-exclusion`: `data/status/<App>` (`installed`/`uninstalled`/`corrupted`/`disabled`), `data/settings/<Name>`, `data/category-overrides` (per-user overrides layered on top of `etc/categories`), `data/update-status`, `data/preload`, `data/runonce_hashes`.
 
 ### App directory format (`apps/<App Name>/`)
 
 Two kinds of apps, distinguished by `app_type()` in `api`:
 
 - **Standard app** — has an `install` script, or `install-32`/`install-64`, or both, plus an `uninstall` script. `install` (no suffix) means the same script handles both CPU architectures; it can read the `$arch` variable (`"32"` or `"64"`) to branch internally. `install-32`/`install-64` are architecture-specific alternatives to that — if only `install-64` exists, the app is only ever shown/installable on 64-bit systems (and vice versa for `install-32`). Scripts are plain bash sourced with all `api` functions available (`script_name_cpu()`/`script_name()` in `api` determine which script applies). See `apps/template/` for the canonical skeleton and inline guidance.
-- **Package app** — has a `packages` file instead of install scripts: one or more existing apt package names (supports `|` as an "any of these" separator, see `pkgapp_packages_required()` in `api`). No install/uninstall scripts needed; Pi-Apps handles it generically as a thin wrapper. Per project convention, package-apps should only be added to *complement* an existing category of script-apps, not stand alone in a new category — Pi-Apps intentionally isn't "a GUI for apt".
+- **Package app** — has a `packages` file instead of install scripts: one or more existing apt package names (supports `|` as an "any of these" separator, see `pkgapp_packages_required()` in `api`). No install/uninstall scripts needed; Pi-Apps handles it generically as a thin wrapper. Per project convention, package-apps should only be added to _complement_ an existing category of script-apps, not stand alone in a new category — Pi-Apps intentionally isn't "a GUI for apt".
 
 Every app also has: `description` (first line = tooltip), `credits`, `website`, `icon-24.png`, `icon-64.png`.
 
@@ -52,18 +64,67 @@ Category membership lives in `etc/categories` (global, kept in sync with upstrea
 
 - **Never call `apt`/`apt-get`/`dpkg` directly.** Use `install_packages pkg1 pkg2 ... || exit 1` in `install`, and `purge_packages || exit 1` in `uninstall`. `install_packages` builds a per-app dummy `.deb` that depends on the requested packages, so `purge_packages` can safely autoremove exactly what this app pulled in — without touching packages the user already had or that another app also depends on. Calling apt directly breaks that accounting.
 - Use `error "message"` (from `api`) after `||` to abort with a clear red message on any command that must succeed; skip `error` for genuinely optional/best-effort cleanup commands.
-- `uninstall` must undo everything `install` did — *except* it must never delete user-generated data/config (e.g. don't wipe a Minecraft world just because the app is being reinstalled/updated).
+- `uninstall` must undo everything `install` did — _except_ it must never delete user-generated data/config (e.g. don't wipe a Minecraft world just because the app is being reinstalled/updated).
 - For downloading a git repo, prefer the `git_clone` wrapper over bare `git clone` (removes the destination dir first, suppresses noisy output, surfaces errors clearly). `wget` is itself intercepted by an `api` function that transparently upgrades to `aria2c` when possible — no code changes needed to benefit from it.
 - Branch on OS/arch using `api`-provided context (`$__os_id`, `$__os_release`, `$arch`, `get_codename`, `get_model`) rather than re-deriving it; see `apps/PrusaSlicer/install-32` for the idiom.
 
 ### Multi-target support
 
-The same codebase targets Raspberry Pi OS, Ubuntu on Pi, Nvidia Jetson, and Nintendo Switch Switchroot L4T (see Supported systems below). Check existing apps for the idiom before adding new OS/arch-conditional logic.
+The same codebase targets Raspberry Pi OS, Ubuntu on Pi, Nvidia Jetson, Nintendo Switch Switchroot L4T, and other ARMv7/ARMv8/ARMv9 SBCs running official Debian/Ubuntu (see Supported systems below). Check existing apps for the idiom before adding new OS/arch-conditional logic.
 
 ### Supported systems
 
-Fully supported: Raspberry Pi OS (32-bit Bookworm, 64-bit Bookworm, 64-bit Trixie) and Ubuntu Jammy/Noble on Raspberry Pi 2 v1.2+/Zero 2 W/3/4/5; Switchroot L4T Ubuntu Jammy/Noble on Nintendo Switch; Nvidia Jetpack 6 (Jammy)/7 (Noble) on Jetson. This list changes as distros age out (e.g. Bullseye and 32-bit Trixie have both been dropped) — check the "Supported systems"/"Unsupported systems" section of `README.md` for the current matrix, and `is_supported_system()` in `api` for the runtime enforcement logic.
+Fully supported: Raspberry Pi OS (32-bit Bookworm, 64-bit Bookworm, 64-bit Trixie) and Ubuntu Jammy/Noble on Raspberry Pi 2 v1.2/Zero 2 W/3/4/5; Switchroot L4T Ubuntu Jammy/Noble on Nintendo Switch; Nvidia Jetpack 6 (Jammy)/7 (Noble) on Jetson. Not actively tested but expected to work: Ubuntu Asahi (Noble) on Apple Silicon, and official-only Debian Bookworm/Trixie or Ubuntu Jammy/Noble on other ARMv7/ARMv8/ARMv9 boards. This list changes as distros age out (e.g. Bullseye and 32-bit Trixie have both been dropped) — check the "Supported systems"/"Unsupported systems" section of `README.md` for the current matrix, and `is_supported_system()` in `api` for the runtime enforcement logic.
 
 ### Automated app-version updates
 
 `.github/workflows/update_apps.yml` runs per-app updater scripts in `.github/workflows/updates/<App Name>.sh` on a schedule to bump download URLs/versions in that app's install script — when bumping an app version by hand, check whether a corresponding updater script already exists in `.github/workflows/updates/` and should also be kept in sync. These updater scripts have access to helpers not available to normal install scripts (e.g. `get_release owner/repo` to fetch a GitHub repo's latest release tag via `update_github_script.sh`, or `update_debian_repo_script.sh` for apps published to a Debian-style repo); the corresponding app's `install`/`install-32`/`install-64` must define a `version` (or `filepath`/`filepath_32`/`filepath_64`) variable for the updater to substitute into. See `Creating-an-app.md` / `DOCUMENTATION.md` in the website docs for worked examples.
+
+## Git workflow
+
+This checkout is a contribution fork. `origin` is `blackoutsecure/pi-apps`;
+`upstream` is Botspot's original `Botspot/pi-apps`. Both use `master` as the
+default branch. The working branch is `patch-1`.
+
+- Land changes upstream by pull request against `Botspot/pi-apps`: push the
+  working branch to `origin`, then open the PR from there. Do not push to
+  `master` on either remote.
+- One logical change per pull request, with original attribution preserved.
+- Say which systems you tested on and be honest about the ones you could not.
+- App-version bumps belong in the same commit as any matching updater script
+  change under `.github/workflows/updates/`.
+
+## Boundaries
+
+### Always
+
+- Run `shellcheck` over the core scripts and any app script you touched before
+  committing; only errors fail CI, but warnings are still worth reading.
+- Run the live install/uninstall CI (`test_build.yml`) from your fork for any
+  change to an `install`/`install-32`/`install-64`/`uninstall` script.
+- Actually run the installed app on at least one real supported system, and
+  reason explicitly about the supported systems you could not test.
+- Keep install/install-32/install-64/uninstall scripts at mode 775.
+- Grep the `#comment` line on each `api` function for an existing helper before
+  writing a new one.
+
+### Ask first
+
+- Changing a core script (`api`, `manage`, `gui`, `preload`, `updater`,
+  `settings`, `install`, `uninstall`) — these run on every user's machine.
+- Adding a package-app rather than a script-app; per project convention they
+  only complement an existing category of script-apps.
+- Changing category structure: adding or renaming a category, or editing
+  `etc/categories` beyond a single app's line.
+- Changing `data/` semantics or anything an update path writes to.
+
+### Never
+
+- Never call `apt`/`apt-get`/`dpkg` directly in an app script; use
+  `install_packages` and `purge_packages` so dependency accounting stays correct.
+- Never delete user-generated data or config in an `uninstall` script.
+- Never commit downloaded binaries, build artifacts, or anything under the
+  gitignored `update/`, `data/`, or `logs/` paths.
+- Never mark an install/uninstall script non-executable; mode 775 is enforced.
+- Never hand-edit category assignment inside an app directory — there is no such
+  file there.
