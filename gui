@@ -304,6 +304,44 @@ if [ ! -f "${DIRECTORY}/data/announcements" ] || [ ! -z "$(find "${DIRECTORY}/da
   echo "$announcements" > "${DIRECTORY}/data/announcements"
 fi & #use $announcements and & here to avoid delaying launch or emptying the file before download completes
 
+escape_pango_markup() { #Escape user-provided text before placing it in yad Pango markup.
+  printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
+}
+
+app_credits_markup() { #Input: credits file. Output: Pango markup with optional website:, github:, and github-sponsor: links.
+  local credits_file="$1" line key value escaped_line escaped_key escaped_value url output=''
+  while IFS= read -r line || [ -n "$line" ];do
+    escaped_line="$(escape_pango_markup "$line")"
+    key="${line%%:*}"
+    value="${line#*:}"
+    if [ "$key" != "$line" ];then
+      key="$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')"
+      value="${value# }"
+    fi
+    if [ "$key" == website ] && [[ "$value" =~ ^https?://[^[:space:]\"\<\>]+$ ]];then
+      escaped_key="$(escape_pango_markup 'Website')"
+      escaped_value="$(escape_pango_markup "$value")"
+      line="<a href=\"$escaped_value\">$escaped_key</a>"
+    elif [ "$key" == github ] && [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]];then
+      escaped_key="$(escape_pango_markup 'GitHub')"
+      escaped_value="$(escape_pango_markup "$value")"
+      line="$escaped_key: <a href=\"https://github.com/$escaped_value\">$escaped_value</a>"
+    elif [ "$key" == github ] && [[ "$value" =~ ^https?://github\.com/[^[:space:]\"\<\>]+$ ]];then
+      escaped_key="$(escape_pango_markup 'GitHub')"
+      escaped_value="$(escape_pango_markup "$value")"
+      line="$escaped_key: <a href=\"$escaped_value\">$escaped_value</a>"
+    elif [ "$key" == github-sponsor ] && [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]];then
+      escaped_key="$(escape_pango_markup 'GitHub Sponsor')"
+      escaped_value="$(escape_pango_markup "$value")"
+      line="$escaped_key: <a href=\"https://github.com/sponsors/$escaped_value\">$escaped_value</a>"
+    else
+      line="$escaped_line"
+    fi
+    [ -z "$line" ] || output="${output:+$output, }$line"
+  done < "$credits_file"
+  printf '%s' "$output"
+}
+
 details_window() { #input: prefix/app
   local input="$1"
 
@@ -348,15 +386,17 @@ details_window() { #input: prefix/app
     local website="$(head -n1 "${DIRECTORY}/apps/${app}/website")"
     abovetext+=$'\n'"- Website: <a href="\""$website"\"">$website</a>"
     
-    #show credits link if available - on same line as website link
+    #show credits if available - on same line as website link
     if [ -f "${DIRECTORY}/apps/${app}/credits" ];then
-      abovetext+=" | <a href="\""file://${DIRECTORY}/apps/${app}/credits"\"">Credits</a>"
+      local credits="$(app_credits_markup "${DIRECTORY}/apps/${app}/credits")"
+      [ -n "$credits" ] && abovetext+=" | Credits: $credits"
     fi
     
   else #website unavailable
-    #show credits link standalone, if available
+    #show credits standalone, if available
     if [ -f "${DIRECTORY}/apps/${app}/credits" ];then
-      abovetext+=$'\n'"- <a href="\""file://${DIRECTORY}/apps/${app}/credits"\"">Credits</a>"
+      local credits="$(app_credits_markup "${DIRECTORY}/apps/${app}/credits")"
+      [ -n "$credits" ] && abovetext+=$'\n'"- Credits: $credits"
     fi
   fi
   

@@ -1,17 +1,21 @@
 #!/bin/bash
-install_packages yad aria2 udftools cabextract wimtools chntpw genisoimage exfat-fuse wget exfatprogs '|' exfat-utils || exit 1
+wor_repository='https://github.com/blackoutsecure/wor-flasher'
+wor_branch='patch-1'
 
-git_clone https://github.com/Botspot/wor-flasher || error "Failed to download wor-flasher repository!"
+install_packages yad aria2 udftools cabextract wimtools chntpw genisoimage exfat-fuse wget bc parted dosfstools unzip git pv exfatprogs '|' exfat-utils || exit 1
+
+git_clone "$wor_repository" -b "$wor_branch" || error "Failed to download WoR-Flasher from $wor_repository ($wor_branch)!"
 if [ -d ~/wor-flasher-files ];then
   echo -e "\nDuring use, WoR-flasher downloads all files to $HOME/wor-flasher-files\nThis folder exists right now.\nIf WoR-flasher is malfunctioning, deleting this folder may help.\n"
 fi
 
 echo "Creating menu button..."
+mkdir -p "$HOME/.local/share/applications" || error "Failed to create desktop entry directory!"
 echo "[Desktop Entry]
 Type=Application
 Name=WoR Flasher
 Comment=WoR Flasher - Flash Windows 10 or 11 to your Raspberry Pi
 Categories=Utility;
 Exec=$HOME/wor-flasher/install-wor-gui.sh
-Icon=$HOME/wor-flasher/logo.png
-StartupNotify=true" > ~/.local/share/applications/wor-flasher.desktop
+Icon=$HOME/wor-flasher/logo-full.png
+StartupNotify=true" > "$HOME/.local/share/applications/wor-flasher.desktop" || error "Failed to create menu button!"
